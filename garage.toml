@@ -1,0 +1,23 @@
+# Garage元数据和图片文件在容器中的保存位置
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+# Garage使用SQLite保存自身的内部元数据，与业务MySQL相互独立
+db_engine = "sqlite"
+
+# 单机模式只有一份数据副本
+replication_factor = 1
+
+# Garage节点之间通信使用的地址
+rpc_bind_addr = "0.0.0.0:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+# S3区域名称，需要和后端配置保持一致
+s3_region = "garage"
+
+# Garage提供S3 API的端口
+api_bind_addr = "0.0.0.0:3900"
+
+# 支持S3虚拟主机风格地址
+root_domain = ".s3.garage.localhost"

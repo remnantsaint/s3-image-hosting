@@ -1,0 +1,8 @@
+# 包含项目运行所需的正式依赖
+-r requirements.txt
+
+# 自动发现并执行测试
+pytest>=8.3,<10.0
+
+# FastAPI TestClient底层使用HTTPX发送请求
+httpx2>=2.0,<3.0
