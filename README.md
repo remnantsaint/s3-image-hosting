@@ -1,204 +1,218 @@
-### S3 Image Hosting
+# S3 Image Hosting
 
-一个基于 FastAPI 和 S3 兼容对象存储实现的后端图片存储服务。项目提供用户注册与登录、JWT 身份认证、图片上传与管理、临时访问链接、Redis 接口限流、自动化测试以及 Docker Compose 一键启动能力。
+一个可自行部署的全栈图片托管系统，面向个人或小范围团队使用。系统提供用户注册登录、图片上传与管理、临时访问链接、固定分享链接、访问限流等功能，并通过 Docker Compose 统一编排前端、后端、数据库、缓存、对象存储和反向代理。
 
-项目当前以后端为主，不包含前端页面
+## 功能概览
 
-#### 主要功能
+- Vue 3 前端：注册、登录、退出、图片上传、图库浏览和图片删除
+- JWT 身份认证：不同用户只能管理自己的图片
+- 图片校验：支持 JPEG、PNG、GIF、WebP，限制文件大小并校验文件真实类型
+- 分离存储：MySQL 保存图片元数据，Garage 保存图片文件
+- 临时访问：使用 S3 预签名 URL 生成限时访问地址
+- 固定分享：可为图片创建、复制和取消固定分享链接
+- Redis 限流：限制暴力登录和高频恶意上传
+- Alembic 数据库迁移：用版本化脚本维护表结构
+- Pytest 自动化测试：覆盖健康检查、认证、限流和图片主要接口
+- Docker Compose：统一启动 MySQL、Redis、Garage、FastAPI 和 Nginx
+- Nginx：托管生产版前端，并为 API 和公开分享链接提供统一入口
 
-- 用户注册、登录和 JWT 身份认证
-- JPEG、PNG、GIF、WebP 图片上传
-- 10 MB 单文件大小限制和图片文件头校验
-- 使用 Garage 保存图片文件，使用 MySQL 保存用户及图片元数据
-- 分页查询当前用户的图片
-- 生成有效期为 10 分钟的 S3 预签名访问链接
-- 删除图片及其数据库记录
-- 用户数据隔离，用户只能查看和删除自己的图片
-- 基于 Redis 的登录失败限流和图片上传限流
-- Alembic 数据库结构迁移
-- Nginx 反向代理和请求大小限制
-- Pytest 接口与集成测试
-
-#### 技术栈
-
-- Python 
-- FastAPI、Uvicorn、Pydantic
-- SQLAlchemy、Alembic、PyMySQL
-- MySQL 
-- Redis 
-- Garage 
-- Boto3
-- Nginx
-- Docker、Docker Compose
-- Pytest
-
-#### 系统架构
+## 系统架构
 
 ```text
-                         ┌──────────────┐
-浏览器 ── HTTP :8080 ──>│    Nginx     │
-                         └──────┬───────┘
-                                │ Docker内部网络
-                         ┌──────▼───────┐
-                         │   FastAPI    │
-                         │ backend:8000 │
-                         └───┬───┬───┬──┘
-                             │   │   │
-                    ┌────────┘   │   └─────────┐
-                    ▼            ▼             ▼
-                 MySQL         Redis         Garage
-               业务元数据      接口限流       图片文件
-
-浏览器也会使用预签名 URL，通过本机 3900 端口临时读取 Garage 中的图片。
+                         ┌─────────────────────┐
+                         │      Browser        │
+                         └──────────┬──────────┘
+                                    │ :8080
+                         ┌──────────▼──────────┐
+                         │       Nginx         │
+                         │  /      Vue 静态资源 │
+                         │  /api/* FastAPI API │
+                         │  /s/*   公开分享入口 │
+                         └──────────┬──────────┘
+                                    │
+                         ┌──────────▼──────────┐
+                         │      FastAPI        │
+                         └───┬────────┬────────┘
+                             │        │
+                    ┌────────▼─┐  ┌───▼─────┐
+                    │  MySQL   │  │  Redis  │
+                    │ 元数据    │  │  限流    │
+                    └──────────┘  └─────────┘
+                             │
+                    ┌────────▼────────┐
+                    │ Garage（S3 API） │
+                    │ 图片文件         │
+                    └─────────────────┘
 ```
 
-在完整 Docker 模式下，FastAPI 不直接向宿主机暴露端口，外部请求统一经过 Nginx 转发。
+访问固定分享链接 `/s/{share_token}` 时，后端会生成新的短期 S3 预签名 URL，并通过 HTTP 307 重定向到 Garage。固定分享地址本身保持不变，直到用户主动取消分享或删除图片。
 
-#### 项目结构
+## 技术栈
+
+| 分类 | 技术 |
+| --- | --- |
+| 后端 | Python、FastAPI、SQLAlchemy、Pydantic、Alembic |
+| 前端 | Vue 3、TypeScript、Vite、Vue Router、Pinia、Axios、Element Plus |
+| 数据库 | MySQL 8.4 |
+| 缓存与限流 | Redis |
+| 对象存储 | Garage、Boto3、S3 兼容 API |
+| 认证 | JWT、Argon2 密码哈希 |
+| 测试 | Pytest、FastAPI TestClient |
+| 部署 | Docker、Docker Compose、Nginx |
+
+## 项目结构
 
 ```text
 s3-image-hosting/
-├── backend/
-│   ├── api/                 # HTTP接口和依赖项
-│   ├── core/                # 配置与安全工具
-│   ├── db/                  # SQLAlchemy连接与模型基类
-│   ├── migrations/          # Alembic数据库迁移
-│   ├── models/              # SQLAlchemy数据模型
-│   ├── schemas/             # Pydantic请求与响应模型
-│   ├── services/            # Redis和S3客户端
-│   ├── Dockerfile           # FastAPI镜像构建文件
-│   ├── main.py              # FastAPI应用入口
-│   ├── requirements.txt     # 正式运行依赖
-│   └── requirements-dev.txt # 开发与测试依赖
-├── nginx/
-│   └── nginx.conf           # Nginx反向代理配置
-├── tests/                   # 自动化测试
-├── .env.example             # 环境变量示例
-├── alembic.ini              # Alembic配置
-├── docker-compose.yml       # 容器编排配置
-└── garage.toml              # Garage单机开发配置
+├── backend/                 # FastAPI 后端
+│   ├── api/                 # 认证、用户、图片和分享接口
+│   ├── core/                # 配置、安全、限流等基础能力
+│   ├── db/                  # 数据库连接与模型基类
+│   ├── models/              # SQLAlchemy 数据模型
+│   ├── schemas/             # Pydantic 请求/响应模型
+│   ├── services/            # 对象存储等业务服务
+│   └── main.py              # FastAPI 应用入口
+├── frontend/                # Vue 3 前端
+│   ├── src/api/             # 前端 API 请求封装
+│   ├── src/components/      # 图片上传、图片列表等组件
+│   ├── src/router/          # 页面路由
+│   ├── src/stores/          # Pinia 状态管理
+│   └── src/views/           # 登录、注册和图库页面
+├── migrations/              # Alembic 数据库迁移脚本
+├── nginx/                   # Nginx 配置和前端生产镜像
+├── tests/                   # 自动化接口测试
+├── .env.example             # 环境变量模板及部署说明
+├── docker-compose.yml       # 全部服务编排配置
+├── garage.toml              # Garage 单节点开发配置
+├── alembic.ini              # Alembic 配置
+├── requirements.txt         # 后端运行依赖
+└── requirements-dev.txt     # 测试依赖
 ```
 
-#### 快速启动
+## 快速启动（推荐）
 
-##### 1. 环境要求
+### 1. 环境要求
 
-- Docker Desktop
-- Docker Compose
+- Docker Desktop 或 Docker Engine
+- Docker Compose v2
+- Git（用于下载代码）
 
-如果只使用完整 Docker 模式，不需要在宿主机另外安装 Python、MySQL、Redis 或 Garage。
+完整 Docker 启动不要求本机安装 Python、MySQL、Redis、Garage 或 Node.js。
 
-##### 2. 创建环境变量文件
+### 2. 创建环境变量文件
 
-在项目根目录执行：
+Linux、macOS 或 Git Bash：
 
 ```bash
 cp .env.example .env
 ```
 
-打开 `.env`，将所有 `replace_...` 占位值替换成自己的随机密钥或密码。可以使用以下命令生成随机值：
+PowerShell：
 
-```bash
-# JWT密钥
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-
-# 普通随机密码
-python -c "import secrets; print(secrets.token_urlsafe(24))"
-
-# Garage要求的64位十六进制RPC密钥
-python -c "import secrets; print(secrets.token_hex(32))"
+```powershell
+Copy-Item .env.example .env
 ```
 
-##### 3. 构建并启动全部服务
+然后编辑 `.env`，至少替换数据库密码、JWT 密钥、Garage RPC 密钥和 S3 访问密钥。`.env.example` 末尾提供了本地与服务器环境的配置说明以及密钥生成命令。
+
+> 不要将 `.env` 提交到 Git 仓库。项目的 `.gitignore` 已忽略该文件。
+
+### 3. 构建并启动全部服务
 
 ```bash
 docker compose up -d --build
 ```
 
-查看容器状态：
+查看运行状态：
 
 ```bash
 docker compose ps
 ```
 
-所有服务显示为 `healthy` 后，访问：
+首次启动时，系统会自动执行数据库迁移，并初始化 Garage 所需的 bucket 和访问密钥。
 
-- Swagger API 文档：<http://127.0.0.1:8080/docs>
-- 应用健康检查：<http://127.0.0.1:8080/health>
+### 4. 访问系统
 
-FastAPI 容器没有映射宿主机端口，`127.0.0.1:8080` 是项目的统一访问入口。
+默认地址如下：
 
-##### 4. 查看日志
+| 内容 | 地址 |
+| --- | --- |
+| Web 页面 | <http://127.0.0.1:8080/> |
+| Swagger API 文档 | <http://127.0.0.1:8080/docs> |
+| 应用健康检查 | <http://127.0.0.1:8080/api/health> |
+
+如果修改了 `APP_HOST_PORT`，请将地址中的 `8080` 替换为实际端口。
+
+## 基本使用流程
+
+1. 打开 Web 页面并注册账号。
+2. 登录后上传 JPEG、PNG、GIF 或 WebP 图片。
+3. 在“我的图片”中预览、分页浏览或删除图片。
+4. 需要短期访问时复制临时链接。
+5. 需要长期对外分享时创建固定分享链接。
+6. 不再分享时取消固定链接；删除图片也会同时使其分享链接失效。
+
+默认情况下，图片属于私有资源。其他用户无法查看或修改图片，只有主动创建的固定分享链接可以免登录访问。
+
+## 前端开发
+
+本地开发时，可以让 Docker 中的后端与基础服务继续运行，只单独启动 Vite 开发服务器：
 
 ```bash
-# 查看全部服务日志
-docker compose logs -f
-
-# 只查看FastAPI日志
-docker compose logs -f backend
-
-# 只查看Nginx日志
-docker compose logs -f nginx
+cd frontend
+npm ci
+npm run dev
 ```
 
-按 `Ctrl+C` 只会退出日志查看，不会停止容器。
+开发页面默认位于 <http://127.0.0.1:5173/>。修改 Vue 文件后，Vite 会自动热更新。
 
-##### 5. 停止服务
+需要注意：
+
+- `5173` 显示本地实时开发页面。
+- `8080` 显示 Nginx 镜像中最近一次构建的生产页面。
+- 修改前端后若希望 `8080` 同步更新，需要重新构建 Nginx：
 
 ```bash
-docker compose down
+docker compose up -d --build nginx
 ```
 
-该命令会删除容器和项目网络，但保留 MySQL、Redis 和 Garage 的命名数据卷。  
+前端质量检查：
 
-不要随意添加 `-v`，否则会同时删除数据库记录和已经上传的图片。
+```bash
+npm run lint
+npm run build
+```
 
-#### 本地开发
+`npm run build` 会执行 TypeScript 类型检查，并在 `frontend/dist/` 生成可部署的静态文件。
 
-日常修改 Python 代码时，可以只用 Docker 运行基础设施，并在 Conda 环境中运行 FastAPI，以便使用自动重载。
+## 后端本地开发
 
-##### 1. 启动基础设施
+如需在 Conda 环境中调试 FastAPI，可只使用 Docker 启动依赖服务：
 
 ```bash
 docker compose up -d mysql redis garage
 ```
 
-此时根目录 `.env` 中的连接地址应保持为宿主机地址：
-
-```text
-MYSQL_HOST=127.0.0.1
-REDIS_HOST=127.0.0.1
-S3_ENDPOINT_URL=http://127.0.0.1:3900
-S3_PUBLIC_ENDPOINT_URL=http://127.0.0.1:3900
-```
-
-完整 Docker 模式会通过 `docker-compose.yml` 覆盖内部连接地址，使 FastAPI 使用 `mysql`、`redis` 和 `garage` 等 Compose 服务名通信。
-
-##### 2. 创建并安装开发环境
+创建并激活环境后安装依赖：
 
 ```bash
 conda create -n s3-image-hosting python=3.12
 conda activate s3-image-hosting
-pip install -r backend/requirements-dev.txt
+pip install -r requirements-dev.txt
 ```
 
-##### 3. 应用数据库迁移
+执行数据库迁移并启动后端：
 
 ```bash
 python -m alembic upgrade head
-```
-
-##### 4. 启动 FastAPI
-
-```bash
 uvicorn backend.main:app --reload
 ```
 
-本地开发模式的 API 文档地址为：<http://127.0.0.1:8000/docs>。
+本地后端默认地址为 <http://127.0.0.1:8000/>，API 文档位于 <http://127.0.0.1:8000/docs>。
 
-#### 自动化测试
+## 自动化测试
 
-测试会连接本地运行的 MySQL、Redis 和 Garage，因此需要先启动三个基础设施容器：
+测试前应确保 MySQL、Redis 和 Garage 正常运行，并且它们使用的账号、密码与当前 `.env` 一致：
 
 ```bash
 docker compose up -d mysql redis garage
@@ -207,76 +221,138 @@ python -m pytest -v
 
 当前测试覆盖：
 
-- 用户注册与重复信息校验
-- 用户登录、JWT 签发和受保护接口
-- 登录失败限流
-- 四类健康检查
-- 图片上传、列表、预签名访问和删除的完整生命周期
-- 伪造图片拒绝
-- 上传身份认证和请求限流
-- 不同用户之间的图片访问隔离
+- 应用、数据库、Redis 和对象存储健康检查
+- 用户注册、登录和 JWT 认证
+- 登录与上传限流
+- 图片上传、查询、访问和删除等主要流程
 
-测试使用随机用户名，并在结束后清理创建的测试用户和图片记录。
+## 主要接口
 
-#### 主要接口
+下表使用通过 Nginx 访问时的公开路径：
 
 | 方法 | 路径 | 说明 | 是否需要登录 |
 | --- | --- | --- | --- |
-| `GET` | `/health` | 检查 FastAPI 状态 | 否 |
-| `GET` | `/health/database` | 检查 MySQL 连接 | 否 |
-| `GET` | `/health/storage` | 检查 Garage 连接 | 否 |
-| `GET` | `/health/redis` | 检查 Redis 连接 | 否 |
-| `POST` | `/auth/register` | 注册用户 | 否 |
-| `POST` | `/auth/login` | 登录并获取 JWT | 否 |
-| `GET` | `/users/me` | 获取当前用户信息 | 是 |
-| `POST` | `/images` | 上传图片 | 是 |
-| `GET` | `/images` | 分页查询当前用户图片 | 是 |
-| `GET` | `/images/{image_id}/url` | 获取临时访问链接 | 是 |
-| `DELETE` | `/images/{image_id}` | 删除图片 | 是 |
+| GET | `/api/health` | 应用健康检查 | 否 |
+| GET | `/api/health/database` | MySQL 健康检查 | 否 |
+| GET | `/api/health/storage` | Garage 健康检查 | 否 |
+| GET | `/api/health/redis` | Redis 健康检查 | 否 |
+| POST | `/api/auth/register` | 注册用户 | 否 |
+| POST | `/api/auth/login` | 登录并获取 JWT | 否 |
+| GET | `/api/users/me` | 获取当前用户 | 是 |
+| POST | `/api/images` | 上传图片 | 是 |
+| GET | `/api/images` | 分页查询个人图片 | 是 |
+| GET | `/api/images/{id}/url` | 获取临时访问链接 | 是 |
+| DELETE | `/api/images/{id}` | 删除图片 | 是 |
+| POST | `/api/images/{id}/share` | 创建或获取固定分享链接 | 是 |
+| DELETE | `/api/images/{id}/share` | 取消固定分享链接 | 是 |
+| GET | `/s/{share_token}` | 访问公开分享图片 | 否 |
 
-受保护接口需要携带请求头：
+FastAPI 自带文档中显示的是后端内部路径，因此不会带 `/api` 前缀；`/api` 是 Nginx 对外转发时添加的统一入口。
 
-```text
-Authorization: Bearer <access_token>
-```
+## 环境变量说明
 
-#### 数据存储说明
+完整配置和部署示例见 `.env.example`。几个容易混淆的配置如下：
 
-- MySQL 保存用户、密码哈希和图片元数据。
-- Garage 保存真实图片文件，并提供 S3 兼容 API。
-- Redis 保存短期登录失败计数和上传请求计数。
-- Docker 命名数据卷保证容器重建后数据仍然保留。
-- 图片默认是私有对象，只能通过有时效的预签名 URL 访问。
+| 变量 | 用途 |
+| --- | --- |
+| `APP_BIND_HOST` | Nginx 在宿主机监听的地址，本地通常为 `127.0.0.1`，服务器需按访问范围设置 |
+| `APP_HOST_PORT` | 用户访问 Web 系统的宿主机端口 |
+| `PUBLIC_BASE_URL` | 生成固定分享链接时使用的外部基础地址 |
+| `MYSQL_HOST` / `MYSQL_PORT` | 本机运行 FastAPI 时连接 MySQL 使用的地址和端口 |
+| `MYSQL_BIND_HOST` / `MYSQL_HOST_PORT` | Docker 将 MySQL 暴露到宿主机时使用的监听地址和端口 |
+| `S3_ENDPOINT_URL` | 本机运行 FastAPI 时连接 Garage 的内部操作地址 |
+| `S3_PUBLIC_ENDPOINT_URL` | 浏览器最终访问临时预签名 URL 时使用的外部 Garage 地址 |
+| `REDIS_HOST` / `REDIS_PORT` | 本机运行 FastAPI 时连接 Redis 使用的地址和端口 |
+| `REDIS_BIND_HOST` / `REDIS_HOST_PORT` | Docker 将 Redis 暴露到宿主机时使用的监听地址和端口 |
 
-#### 常用命令
+容器内的后端会通过 Compose 服务名 `mysql`、`redis`、`garage` 连接其他容器；这些值已在 `docker-compose.yml` 中覆盖，不需要手动写进镜像。
+
+## 部署到 Linux 服务器
+
+服务器只需要安装 Docker 与 Docker Compose，Git 仅用于下载和更新代码。详细部署检查清单已经写在 `.env.example` 末尾。
+
+基本流程如下：
 
 ```bash
-# 重新构建并启动FastAPI和Nginx
-docker compose up -d --build backend nginx
+git clone <repository-url>
+cd s3-image-hosting
+cp .env.example .env
+# 编辑 .env，填写生产环境地址、端口和随机密钥
 
-# 查看所有容器状态
-docker compose ps
-
-# 停止某个服务
-docker compose stop mysql
-
-# 重新启动某个服务
-docker compose start mysql
-
-# 查看当前数据库迁移版本
-python -m alembic current
-
-# 根据模型变化生成新的迁移文件
-python -m alembic revision --autogenerate -m "describe schema change"
-
-# 将数据库升级到最新迁移
-python -m alembic upgrade head
+docker compose up -d mysql redis garage
+docker compose build backend nginx
+docker compose run --rm backend alembic upgrade head
+docker compose up -d
 ```
 
-#### 当前限制
+如果服务器还运行其他项目，应在 `.env` 中选择未被占用的宿主机端口。例如将 `APP_HOST_PORT` 设置为 `18080` 后，可通过 `http://服务器公网IP:18080/` 访问。
 
-- 当前使用 Garage 单节点模式，适合本地开发和项目演示。
-- 项目尚未配置前端页面、HTTPS、域名和 CDN。
-- 预签名图片地址默认只在 10 分钟内有效。
-- 自动化测试目前使用本地开发基础设施，而不是独立测试集群。
-- 如果部署到公网，还需要增加用户存储配额、注册限流、日志轮转、备份和监控等能力。
+还需要在云平台安全组或服务器防火墙中开放实际使用的 Web 端口，以及当前架构下浏览器访问 Garage 所需的 S3 公网端口。MySQL 和 Redis 端口不应向公网开放。
+
+当前项目尚未配置域名和 HTTPS。若面向互联网长期使用，建议在外层增加 HTTPS 反向代理，并进一步收紧 Garage 端口的访问范围。
+
+## 数据持久化
+
+Docker Compose 使用命名卷保存数据：
+
+- `mysql_data`：用户、图片元数据和分享令牌
+- `redis_data`：Redis 持久化数据
+- `garage_meta`：Garage 元数据
+- `garage_data`：图片对象数据
+
+停止或重新创建容器不会自动删除这些数据：
+
+```bash
+docker compose down
+```
+
+以下命令会删除容器和数据卷，数据库记录及图片都可能丢失，请谨慎执行：
+
+```bash
+docker compose down -v
+```
+
+## 常用命令
+
+```bash
+# 启动全部服务
+docker compose up -d
+
+# 重新构建后端与前端/Nginx
+docker compose up -d --build backend nginx
+
+# 查看容器状态
+docker compose ps
+
+# 查看全部服务日志
+docker compose logs -f
+
+# 查看后端日志
+docker compose logs -f backend
+
+# 执行数据库迁移
+docker compose run --rm backend alembic upgrade head
+
+# 停止服务但保留数据
+docker compose down
+```
+
+## 安全说明与当前限制
+
+- 用户密码使用 Argon2 哈希后保存，JWT 密钥和各服务密码必须使用随机强密钥。
+- 图片默认私有，固定分享链接一旦创建，获得链接的人无需登录即可查看图片。
+- 临时 S3 链接有效期较短；固定分享链接不会直接暴露永久 S3 权限。
+- 当前允许公开注册，尚未实现管理员后台、注册审批、用户配额和存储用量统计。
+- Garage 当前采用单节点、单副本配置，适合个人项目和小范围试用，不等同于高可用生产集群。
+- 当前未包含 HTTPS、CDN、自动备份、监控告警和恶意内容审核。
+- 在非 HTTPS 页面中，浏览器可能限制剪贴板 API；前端会直接显示固定分享地址，便于手动复制。
+
+## 后续计划
+
+- 管理员与用户管理功能
+- 用户存储配额和图片用量统计
+- 图片搜索、标签和批量操作
+- 缩略图与图片压缩
+- HTTPS、域名和 CDN 接入
+- 数据备份、监控与日志完善
+- 为固定分享流程补充更完整的自动化测试

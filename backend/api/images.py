@@ -24,6 +24,7 @@ from backend.schemas.image import (
     ImageListResponse,
     ImageResponse,
     ImageUrlResponse,
+    ImageShareResponse,
 )
 from backend.services.storage import (
     get_s3_client,
@@ -31,6 +32,7 @@ from backend.services.storage import (
 )
 from redis.exceptions import RedisError
 from backend.services.cache import get_redis_client
+from secrets import token_urlsafe
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,12 @@ ALLOWED_IMAGE_TYPES = {
 # 每个用户60秒内最多发起10次上传请求
 UPLOAD_MAX_REQUESTS = 10
 UPLOAD_RATE_LIMIT_SECONDS = 60
+
+def build_share_url(share_token: str) -> str:
+    """根据分享码生成用户可以复制的固定分享链接。"""
+
+    base_url = settings.public_base_url.rstrip("/")
+    return f"{base_url}/s/{share_token}"
 
 
 def check_upload_rate_limit(user_id: int) -> None:
@@ -329,6 +337,11 @@ def list_my_images(
                     size_bytes=image_record.size_bytes,
                     created_at=image_record.created_at,
                     url=url,
+                    share_url=(
+                        build_share_url(image_record.share_token)
+                        if image_record.share_token
+                        else None
+                    ),
                 )
             )
     except (BotoCoreError, ClientError) as exc:
@@ -344,6 +357,101 @@ def list_my_images(
         page=page,
         page_size=page_size,
         items=items,
+    )
+
+
+@router.post(
+    "/{image_id}/share",
+    response_model=ImageShareResponse,
+)
+def create_image_share(
+    image_id: int,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+) -> ImageShareResponse:
+    """为当前用户的图片创建固定分享链接。"""
+
+    image_record = db.scalar(
+        select(Image).where(
+            Image.id == image_id,
+            Image.owner_id == current_user.id,
+        )
+    )
+
+    if image_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+
+    # 已经分享过时直接返回原链接，
+    # 避免重复点击产生不同链接。
+    if image_record.share_token is None:
+        image_record.share_token = token_urlsafe(24)
+
+        # MySQL的DATETIME字段保存不带时区的UTC时间
+        image_record.shared_at = datetime.now(
+            timezone.utc
+        ).replace(tzinfo=None)
+
+        try:
+            db.commit()
+        except SQLAlchemyError as exc:
+            db.rollback()
+            logger.exception("Failed to create image share")
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create image share",
+            ) from exc
+
+    return ImageShareResponse(
+        id=image_record.id,
+        share_url=build_share_url(image_record.share_token),
+    )
+
+
+@router.delete(
+    "/{image_id}/share",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def cancel_image_share(
+    image_id: int,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+) -> Response:
+    """取消图片分享，但不删除原图片。"""
+
+    image_record = db.scalar(
+        select(Image).where(
+            Image.id == image_id,
+            Image.owner_id == current_user.id,
+        )
+    )
+
+    if image_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+
+    # 清除分享码后，原固定链接立即无法通过数据库查询
+    image_record.share_token = None
+    image_record.shared_at = None
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Failed to cancel image share")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel image share",
+        ) from exc
+
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
     )
 
 

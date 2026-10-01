@@ -53,6 +53,23 @@ class Image(Base):
         nullable=False,
     )
 
+    # 固定分享链接使用的随机标识。
+    # 为None表示图片尚未公开分享。
+    share_token: Mapped[str | None] = mapped_column(
+        String(64),
+        unique=True,
+        index=True,
+        nullable=True,
+        default=None,
+    )
+
+    # 创建固定分享链接的时间
+    shared_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        default=None,
+    )
+
     # 图片记录创建时间
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

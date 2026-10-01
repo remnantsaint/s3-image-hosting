@@ -12,9 +12,8 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
 
-    # 将本机3306端口映射到容器的3306端口
     ports:
-      - "127.0.0.1:3306:3306"
+      - "${MYSQL_BIND_HOST:-127.0.0.1}:${MYSQL_HOST_PORT:-3306}:3306"
 
     # 使用Docker数据卷保存数据库文件
     volumes:
@@ -50,9 +49,8 @@ services:
       GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_ACCESS_KEY}
       GARAGE_DEFAULT_BUCKET: ${S3_BUCKET}
 
-    # 3900是Garage提供的S3 API端口
     ports:
-      - "127.0.0.1:3900:3900"
+      - "${GARAGE_BIND_HOST:-127.0.0.1}:${GARAGE_HOST_PORT:-3900}:3900"
 
     # 配置、元数据和图片文件分别持久化保存
     volumes:
@@ -84,9 +82,8 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
-    # 只允许本机访问Redis
     ports:
-      - "127.0.0.1:6379:6379"
+      - "${REDIS_BIND_HOST:-127.0.0.1}:${REDIS_HOST_PORT:-6379}:6379"
 
     # 开启AOF持久化，并要求客户端提供密码
     command:
@@ -127,8 +124,8 @@ services:
     # 容器之间不能使用127.0.0.1，
     # 需要通过Docker Compose服务名通信
     environment:
-      APP_ENV: docker
-      DEBUG: "false"
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: "${DEBUG:-false}"
 
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -137,7 +134,7 @@ services:
       REDIS_PORT: 6379
 
       S3_ENDPOINT_URL: http://garage:3900
-      S3_PUBLIC_ENDPOINT_URL: http://127.0.0.1:3900
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL}
 
     # 等三个依赖服务健康后再启动后端
     depends_on:
@@ -162,8 +159,11 @@ services:
       start_period: 20s
 
   nginx:
-    # 使用Nginx官方轻量级镜像
-    image: nginx:1.28-alpine
+    # 构建Vue生产文件，并放入Nginx镜像
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+
     container_name: s3-image-hosting-nginx
     restart: unless-stopped
 
@@ -172,15 +172,10 @@ services:
       backend:
         condition: service_healthy
 
-    # 将本机8080端口映射到Nginx的80端口
     ports:
-      - "127.0.0.1:8080:80"
+      - "${APP_BIND_HOST:-127.0.0.1}:${APP_HOST_PORT:-8080}:80"
 
-    # 使用项目中的Nginx配置替换默认配置
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-
-    # 通过代理访问FastAPI健康检查
+    # 通过/api代理访问FastAPI健康检查
     healthcheck:
       test:
         [
@@ -189,7 +184,7 @@ services:
           "--quiet",
           "--tries=1",
           "--spider",
-          "http://127.0.0.1/health",
+          "http://127.0.0.1/api/health",
         ]
       interval: 10s
       timeout: 5s

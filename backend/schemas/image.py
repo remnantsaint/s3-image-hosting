@@ -39,6 +39,8 @@ class ImageListItemResponse(BaseModel):
     size_bytes: int
     created_at: datetime
     url: str
+    # 固定分享链接；为None表示尚未分享
+    share_url: str | None = None
 
 
 class ImageListResponse(BaseModel):
@@ -48,3 +50,10 @@ class ImageListResponse(BaseModel):
     page: int
     page_size: int
     items: list[ImageListItemResponse]
+
+
+class ImageShareResponse(BaseModel):
+    """创建固定分享链接后的响应格式。"""
+
+    id: int
+    share_url: str

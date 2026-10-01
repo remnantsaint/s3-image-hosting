@@ -4,6 +4,7 @@ from backend.api.auth import router as auth_router
 from backend.api.users import router as users_router
 from backend.api.images import router as images_router
 from backend.core.config import get_settings
+from backend.api.shares import router as shares_router
 
 settings = get_settings()
 
@@ -24,3 +25,6 @@ app.include_router(users_router)
 
 # 将图片上传和管理接口注册到FastAPI应用
 app.include_router(images_router)
+
+# 注册无需登录的固定图片分享接口
+app.include_router(shares_router)

@@ -9,3 +9,6 @@ __pycache__
 tests
 node_modules
 node_cache
+frontend/dist
+frontend/.eslintcache
+*.tsbuildinfo

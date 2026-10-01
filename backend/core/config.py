@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     app_name: str = "S3 Image Hosting"
     app_env: str = "development"
     debug: bool = True
+    # 用户访问固定分享链接时使用的公开地址
+    public_base_url: str = "http://127.0.0.1:8080"
 
     # MySQL连接信息，对应.env中的环境变量
     mysql_host: str = "127.0.0.1"
